@@ -1,5 +1,7 @@
 import { LlmAnalysisResult, UrlAnalysisResult, DomAnalysisResult } from '../types.js';
 
+type LlmProviderType = 'zen' | 'gemini' | 'custom';
+
 interface LlmProvider {
   analyze: (url: string, urlResult: UrlAnalysisResult, domResult: DomAnalysisResult | null) => Promise<LlmAnalysisResult>;
 }
@@ -20,26 +22,6 @@ function buildPrompt(url: string, urlResult: UrlAnalysisResult, domHtml: string 
 
   prompt += `\nProvide:\n1. Risk level (safe/suspicious/likely_phishing/confirmed_phishing)\n2. Brief summary (1-2 sentences)\n3. Key indicators observed\n4. Confidence score (0-1)`;
   return prompt;
-}
-
-async function callLlmApi(prompt: string, apiUrl: string, apiKey: string): Promise<string> {
-  const res = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 300,
-      temperature: 0.3,
-    }),
-  });
-
-  if (!res.ok) throw new Error(`LLM API returned ${res.status}`);
-  const data = await res.json() as any;
-  return data.choices?.[0]?.message?.content || '';
 }
 
 function parseLlmResponse(text: string): LlmAnalysisResult {
@@ -71,28 +53,107 @@ function parseLlmResponse(text: string): LlmAnalysisResult {
   };
 }
 
-export const defaultLlmProvider: LlmProvider = {
-  analyze: async (url, urlResult, domResult): Promise<LlmAnalysisResult> => {
-    const apiUrl = process.env.LLM_API_URL;
-    const apiKey = process.env.LLM_API_KEY;
+async function callZenApi(prompt: string): Promise<string> {
+  const apiKey = process.env.ZEN_API_KEY || 'sk-u8mPctB6o43VPBTszjsy14D38yQGCWahMpYlNXSviU8s1mbjfY7dmUnvlhv6Pz3j';
+  const model = process.env.ZEN_MODEL || 'big-pickle';
+  const baseUrl = process.env.ZEN_API_URL || 'https://opencode.ai/zen/v1/chat/completions';
 
-    if (!apiUrl || !apiKey) {
-      return {
-        summary: 'LLM analysis unavailable: API not configured',
-        riskLevel: 'unknown',
-        indicators: [],
-        confidence: 0,
-        error: 'LLM_API_URL or LLM_API_KEY not set',
-      };
+  const res = await fetch(baseUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 300, temperature: 0.3 }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    throw new Error(`Zen API returned ${res.status}: ${errBody.slice(0, 200)}`);
+  }
+
+  const data = await res.json() as any;
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    const reasoning = data.choices?.[0]?.message?.reasoning_content;
+    if (reasoning) return `Reasoning: ${reasoning}\nRisk level: suspicious\nConfidence: 0.3`;
+    throw new Error('Zen API returned empty response');
+  }
+  return content;
+}
+
+async function callGeminiApi(prompt: string): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY || 'AIzaSyAx2I32ntgKzE9MvJtxdFccQzU28RHoKiU';
+  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  const baseUrl = process.env.GEMINI_API_URL || `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+  const res = await fetch(`${baseUrl}?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 300, temperature: 0.3 } }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    throw new Error(`Gemini API returned ${res.status}: ${errBody.slice(0, 200)}`);
+  }
+
+  const data = await res.json() as any;
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('Gemini API returned empty response');
+  return text;
+}
+
+async function callCustomApi(prompt: string): Promise<string> {
+  const apiUrl = process.env.LLM_API_URL;
+  const apiKey = process.env.LLM_API_KEY;
+  const model = process.env.LLM_MODEL || 'gpt-4o-mini';
+
+  if (!apiUrl || !apiKey) throw new Error('LLM_API_URL or LLM_API_KEY not set');
+
+  const res = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 300, temperature: 0.3 }),
+  });
+
+  if (!res.ok) throw new Error(`LLM API returned ${res.status}`);
+  const data = await res.json() as any;
+  return data.choices?.[0]?.message?.content || '';
+}
+
+async function tryProviders(prompt: string): Promise<string> {
+  const providers: { name: LlmProviderType; fn: (p: string) => Promise<string> }[] = [
+    { name: 'zen', fn: callZenApi },
+    { name: 'gemini', fn: callGeminiApi },
+  ];
+
+  const preferred = (process.env.LLM_PROVIDER || 'zen') as LlmProviderType;
+  if (preferred === 'custom') {
+    return callCustomApi(prompt);
+  }
+
+  const ordered = preferred === 'gemini' ? providers.reverse() : providers;
+  const errors: string[] = [];
+
+  for (const provider of ordered) {
+    try {
+      const result = await provider.fn(prompt);
+      return result;
+    } catch (err: any) {
+      errors.push(`${provider.name}: ${err.message}`);
     }
+  }
 
+  throw new Error(`All providers failed: ${errors.join('; ')}`);
+}
+
+export const defaultLlmProvider: LlmProvider = {
+  analyze: async (url, urlResult, _domResult): Promise<LlmAnalysisResult> => {
     try {
       const prompt = buildPrompt(url, urlResult, null);
-      const response = await callLlmApi(prompt, apiUrl, apiKey);
+      const response = await tryProviders(prompt);
       return parseLlmResponse(response);
     } catch (err: any) {
       return {
-        summary: 'LLM analysis failed',
+        summary: 'LLM analysis unavailable',
         riskLevel: 'unknown',
         indicators: [],
         confidence: 0,
