@@ -77,3 +77,18 @@ Phishing kits reuse infrastructure patterns. Automated analysis catches what man
 - [ ] Certificate transparency log checking
 - [ ] Brand reputation database
 - [ ] Bulk URL submission
+
+## Ecosystem
+
+Part of the threat intelligence ecosystem. PhishKit reports feed into trace for incident correlation alongside iris IOCs, sentry findings, and packetwatch anomalies:
+
+| Service | Port | Description |
+|---------|------|-------------|
+| [iris](https://github.com/makhembu/iris) | 3000 | IOC aggregation |
+| [sentry](https://github.com/makhembu/sentry) | 3001 | Detection rules |
+| **phishkit** | **3002** | **Phishing analysis** |
+| [packetwatch](https://github.com/makhembu/packetwatch) | 3003 | Anomaly detection |
+| [trace](https://github.com/makhembu/trace) | 3004 | Incident correlation |
+| [nexus](https://github.com/makhembu/nexus) | 3100 | Dashboard & gateway |
+
+Use `threat-stack.ps1` from the repo root to run all services: `.\threat-stack.ps1 start`
