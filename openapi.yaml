@@ -1,0 +1,116 @@
+openapi: "3.0.3"
+info:
+  title: PhishKit — Phishing Analysis Pipeline
+  description: URL pattern analysis, DOM structure inspection, and LLM-assisted phishing risk assessment.
+  version: 1.0.0
+  contact:
+    name: makhembu
+    url: https://github.com/makhembu/phishkit
+
+servers:
+  - url: http://localhost:3002
+    description: Local development
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: Service status with report count and uptime
+
+  /analyze:
+    post:
+      summary: Analyze a URL for phishing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  example: https://secure-login-paypal.com.verify-account.tk/login
+                html:
+                  type: string
+                  description: Optional DOM/HTML content for analysis
+                enableLlm:
+                  type: boolean
+                  description: Enable LLM-assisted analysis
+                tags:
+                  type: array
+                  items: { type: string }
+      responses:
+        "201":
+          description: Phishing analysis report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhishingReport"
+
+  /reports:
+    get:
+      summary: Query phishing reports
+      parameters:
+        - name: minScore
+          in: query
+          schema: { type: number, minimum: 0, maximum: 1 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, analyzing, completed, failed] }
+        - name: domain
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 500 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Paginated report list
+
+  /reports/{id}:
+    get:
+      summary: Get single report
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Full report with all analysis stages
+        "404":
+          description: Report not found
+
+  /stats:
+    get:
+      summary: Analysis statistics
+      responses:
+        "200":
+          description: Total reports, average score, score distribution, top domains, recent high-risk
+
+components:
+  schemas:
+    PhishingReport:
+      type: object
+      properties:
+        id: { type: string }
+        url: { type: string }
+        domain: { type: string }
+        status: { type: string }
+        phishScore:
+          type: string
+          enum: [safe, suspicious, likely_phishing, confirmed_phishing]
+        urlAnalysis: { type: object }
+        domAnalysis: { type: object, nullable: true }
+        llmAnalysis: { type: object, nullable: true }
+        finalScore: { type: number }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        tags: { type: array, items: { type: string } }

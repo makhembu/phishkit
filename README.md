@@ -14,6 +14,33 @@ npm start
 # Server running at http://localhost:3002
 ```
 
+## Architecture
+
+```mermaid
+flowchart LR
+    Feeds["Threat Feeds"] --> Iris["iris<br/>IOC Aggregation<br/>Port 3000"]
+    Iris --> Sentry["sentry<br/>Port 3001"]
+    Iris --> PhishKit["phishkit (this service)<br/>Phishing Analysis<br/>Port 3002"]
+    Iris --> PacketWatch["packetwatch<br/>Port 3003"]
+    Sentry --> Trace["trace<br/>Incident Correlation<br/>Port 3004"]
+    PhishKit --> Trace
+    PacketWatch --> Trace
+    Trace --> Nexus["nexus<br/>Dashboard & Gateway<br/>Port 3100"]
+```
+
+phishkit analyzes URLs and DOM content for phishing indicators, then feeds reports into trace for incident correlation with IOCs and anomalies.
+
+## Docker
+
+```bash
+# Build and run standalone
+docker build -t phishkit .
+docker run -p 3002:3002 phishkit
+
+# Run the full ecosystem
+docker compose -f ../nexus/docker-compose.yml up
+```
+
 ## API
 
 ### Analyze a URL
